@@ -1,0 +1,30 @@
+{
+  "name": "knowledge-bot",
+  "version": "1.0.0",
+  "description": "Ամենօրյա գիտելիքների Telegram բոտ՝ ընտրված ոլորտների վերաբերյալ համացանցային նյութերի որոնումով և ամփոփումով",
+  "main": "dist/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "cron": "node dist/cron.js",
+    "dev:server": "ts-node src/server.ts",
+    "dev:cron": "ts-node src/cron.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "ioredis": "^6.0.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

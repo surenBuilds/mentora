@@ -1,0 +1,16 @@
+name: Daily Mentora Digest
+
+on:
+  schedule:
+    # 05:00 UTC = 09:00 Երևանի ժամանակով (UTC+4, առանց DST)
+    - cron: "0 5 * * *"
+  workflow_dispatch: {} # հնարավորություն ձեռքով գործարկելու GitHub UI-ից
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Render trigger-digest endpoint
+        run: |
+          curl -f -X POST "${{ secrets.RENDER_URL }}/trigger-digest" \
+            -H "X-Trigger-Secret: ${{ secrets.TRIGGER_SECRET }}"
