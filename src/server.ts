@@ -26,20 +26,23 @@ function escapeMd(text: string): string {
 }
 
 async function send(chatId: string, text: string, markdown = true): Promise<void> {
-  try {
-    await axios.post(`${TG_API}/sendMessage`, {
-      chat_id: chatId,
-      text,
-      ...(markdown ? { parse_mode: "MarkdownV2" } : {}),
-    });
-  } catch (err: any) {
-    console.error("Telegram ուղարկման սխալ:", err?.response?.data || err.message);
-    if (markdown) {
-      // fallback՝ առանց markdown-ի, եթե escape-ի խնդիր կա
-      try {
-        await axios.post(`${TG_API}/sendMessage`, { chat_id: chatId, text });
-      } catch {
-        /* no-op */
+  const chunks = text.match(/[\s\S]{1,3900}/g) || [text];
+  for (const chunk of chunks) {
+    try {
+      await axios.post(`${TG_API}/sendMessage`, {
+        chat_id: chatId,
+        text: chunk,
+        ...(markdown ? { parse_mode: "MarkdownV2" } : {}),
+      });
+    } catch (err: any) {
+      console.error("Telegram ուղարկման սխալ:", err?.response?.data || err.message);
+      if (markdown) {
+        // fallback՝ առանց markdown-ի, եթե escape-ի խնդիր կա
+        try {
+          await axios.post(`${TG_API}/sendMessage`, { chat_id: chatId, text: chunk });
+        } catch {
+          /* no-op */
+        }
       }
     }
   }
@@ -62,7 +65,7 @@ const pendingQuiz = new Map<string, PendingQuiz>();
  */
 async function runLearnAndQuiz(chatId: string, topic: string): Promise<void> {
   const results = await searchTopic(topic);
-  const summary = await summarizeTopic(topic, results);
+  const summary = await summarizeTopic(topic, results, "detailed");
   await send(chatId, `🔎 *${escapeMd(topic.toUpperCase())}*\n\n${escapeMd(summary)}`);
 
   const question = await generateQuizQuestion(topic, summary);
