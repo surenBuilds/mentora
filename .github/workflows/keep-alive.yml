@@ -1,0 +1,13 @@
+name: Keep Mentora Awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # ամեն 10 րոպեն մեկ
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render service
+        run: curl -f "${{ secrets.RENDER_URL }}/" || true

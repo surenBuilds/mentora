@@ -2,7 +2,7 @@ import express from "express";
 import axios from "axios";
 import { Telegraf } from "telegraf";
 import { config } from "./config";
-import { loadState, saveState } from "./state";
+import { loadState, saveState, Session } from "./state";
 import { sendDigest } from "./digest";
 import { searchTopic } from "./search";
 import { summarizeTopic } from "./summarize";
@@ -48,17 +48,6 @@ async function send(chatId: string, text: string, markdown = true): Promise<void
   }
 }
 
-// Հիշում է, թե որ chat-երն են սպասում «ի՞նչ ոլորտ» պատասխանի (Սովորել փուլի սկիզբ)։
-const awaitingTopic = new Set<string>();
-
-// Հիշում է, թե որ chat-երն են սպասում quiz-ի պատասխանի (Ստուգվել փուլ)։
-interface PendingQuiz {
-  topic: string;
-  summary: string;
-  question: string;
-}
-const pendingQuiz = new Map<string, PendingQuiz>();
-
 /**
  * Սովորել + Հասկանալ փուլ. որոնում է նյութ, ամփոփում, ուղարկում,
  * հետո գեներացնում ու ուղարկում է ստուգիչ հարց (Ստուգվել փուլի սկիզբ)։
@@ -69,7 +58,12 @@ async function runLearnAndQuiz(chatId: string, topic: string): Promise<void> {
   await send(chatId, `🔎 *${escapeMd(topic.toUpperCase())}*\n\n${escapeMd(summary)}`);
 
   const question = await generateQuizQuestion(topic, summary);
-  pendingQuiz.set(chatId, { topic, summary, question });
+
+  const state = await loadState();
+  state.chatId = chatId;
+  state.session = { status: "awaiting_answer", topic, summary, question };
+  await saveState(state);
+
   await send(chatId, `❓ ${escapeMd(question)}`);
 }
 
@@ -79,16 +73,17 @@ async function runLearnAndQuiz(chatId: string, topic: string): Promise<void> {
  */
 async function runEvaluateAndSchedule(
   chatId: string,
-  pending: PendingQuiz,
+  session: Required<Pick<Session, "topic" | "summary" | "question">>,
   userAnswer: string
 ): Promise<void> {
-  const { topic, summary, question } = pending;
+  const { topic, summary, question } = session;
   const result = await evaluateAnswer(topic, summary, question, userAnswer);
 
   const state = await loadState();
   const existing = state.knowledgeMap[topic];
   const updated = updateKnowledge(existing, result.verdict);
   state.knowledgeMap[topic] = updated;
+  state.session = { status: "awaiting_topic" }; // շարունակում ենք ցիկլը հաջորդ թեմայի համար
   await saveState(state);
 
   const verdictEmoji =
@@ -99,6 +94,11 @@ async function runEvaluateAndSchedule(
   await send(
     chatId,
     `${verdictEmoji} ${escapeMd(result.feedback)}\n\n_Հաջորդ կրկնությունը՝ մոտ ${nextReviewDays} օր հետո_`
+  );
+  await send(
+    chatId,
+    "Էլի ի՞նչ ես ուզում սովորել։ (կամ /review՝ կրկնվող թեմաների համար, /stop՝ ավարտելու)",
+    false
   );
 }
 
@@ -121,8 +121,10 @@ bot.start(async (ctx) => {
 
 bot.command("now", async (ctx) => {
   const chatId = String(ctx.chat.id);
-  pendingQuiz.delete(chatId);
-  awaitingTopic.add(chatId);
+  const state = await loadState();
+  state.chatId = chatId;
+  state.session = { status: "awaiting_topic" };
+  await saveState(state);
   await ctx.reply(
     'Ի՞նչ ոլորտի կամ թեմայի մասին ես ուզում սովորել հիմա։ (գրիր, օր. "արհեստական բանականություն" կամ "ապրանքանիշի կառուցում")'
   );
@@ -148,28 +150,33 @@ bot.command("review", async (ctx) => {
 // Ազատ տեքստով պատասխան.
 // 1) եթե սպասում ենք quiz-ի պատասխանի՝ գնահատում ենք
 // 2) եթե սպասում ենք թեմայի անվանում՝ սկսում ենք Սովորել+Ստուգվել ցիկլը
+// Session-ը պահվում է Redis-ում (ոչ թե հիշողությունում), որ չկորչի,
+// երբ Render-ի free tier service-ը «քնում» է հաղորդագրությունների միջև։
 bot.on("text", async (ctx, next) => {
   const chatId = String(ctx.chat.id);
   const text = ctx.message.text.trim();
 
   if (text.startsWith("/")) return next();
 
-  const pending = pendingQuiz.get(chatId);
-  if (pending) {
-    pendingQuiz.delete(chatId);
-    runEvaluateAndSchedule(chatId, pending, text)
-      .catch((err) => console.error("Գնահատման ֆոնային սխալ:", err))
-      .finally(async () => {
-        awaitingTopic.add(chatId);
-        await send(chatId, "Էլի ի՞նչ ես ուզում սովորել։ (կամ /review՝ կրկնվող թեմաների համար, /stop՝ ավարտելու)", false);
-      });
+  const state = await loadState();
+  const session = state.session;
+
+  if (session.status === "awaiting_answer" && session.topic && session.summary && session.question) {
+    const sessionData = {
+      topic: session.topic,
+      summary: session.summary,
+      question: session.question,
+    };
+    await ctx.reply("Ստուգում եմ պատասխանդ, մի պահ...");
+    runEvaluateAndSchedule(chatId, sessionData, text).catch((err) =>
+      console.error("Գնահատման ֆոնային սխալ:", err)
+    );
     return;
   }
 
-  if (awaitingTopic.has(chatId)) {
-    awaitingTopic.delete(chatId);
-    const state = await loadState();
+  if (session.status === "awaiting_topic") {
     state.chatId = chatId;
+    state.session = { status: "idle" }; // մինչև runLearnAndQuiz-ը կսահմանի awaiting_answer
     await saveState(state);
 
     await ctx.reply(`Փնտրում եմ նյութեր «${text}» թեմայով, մի պահ...`);
@@ -184,8 +191,10 @@ bot.on("text", async (ctx, next) => {
 
 bot.command("stop", async (ctx) => {
   const chatId = String(ctx.chat.id);
-  awaitingTopic.delete(chatId);
-  pendingQuiz.delete(chatId);
+  const state = await loadState();
+  state.chatId = chatId;
+  state.session = { status: "idle" };
+  await saveState(state);
   ctx.reply("Լավ, կանգնեցրի։ Երբ ուզես նորից սովորել՝ գրիր /now։");
 });
 

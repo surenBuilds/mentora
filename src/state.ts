@@ -9,11 +9,19 @@ export interface TopicKnowledge {
   lastResult: "correct" | "partial" | "incorrect" | null;
 }
 
+export interface Session {
+  status: "idle" | "awaiting_topic" | "awaiting_answer";
+  topic?: string;
+  summary?: string;
+  question?: string;
+}
+
 export interface State {
   chatId: string;
   topics: string[];
   sendTime: string; // cron expression, minute hour * * *
   knowledgeMap: Record<string, TopicKnowledge>;
+  session: Session;
 }
 
 const REDIS_URL = process.env.REDIS_URL || "";
@@ -31,6 +39,7 @@ function defaultState(): State {
     topics: config.defaultTopics,
     sendTime: config.sendTime,
     knowledgeMap: {},
+    session: { status: "idle" },
   };
 }
 
@@ -47,7 +56,12 @@ export async function loadState(): Promise<State> {
     const raw = await redis.get(STATE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<State>;
-    return { ...fallback, ...parsed, knowledgeMap: parsed.knowledgeMap || {} };
+    return {
+      ...fallback,
+      ...parsed,
+      knowledgeMap: parsed.knowledgeMap || {},
+      session: parsed.session || { status: "idle" },
+    };
   } catch (err: any) {
     console.error("State բեռնման սխալ, օգտագործում ենք լռելյայն արժեքները:", err.message);
     return fallback;
