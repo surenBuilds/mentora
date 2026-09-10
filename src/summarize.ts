@@ -8,7 +8,7 @@ function sleep(ms: number): Promise<void> {
 
 async function callGemini(prompt: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
-  const maxAttempts = 3;
+  const maxAttempts = 4;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -22,12 +22,12 @@ async function callGemini(prompt: string): Promise<string> {
       return text || "";
     } catch (err: any) {
       const status = err?.response?.status;
-      const isRateLimited = status === 429;
+      const isRetryable = status === 429 || status === 503;
       const isTimeout = err?.code === "ECONNABORTED";
-      if ((isRateLimited || isTimeout) && attempt < maxAttempts) {
+      if ((isRetryable || isTimeout) && attempt < maxAttempts) {
         const backoffMs = attempt * 5000; // 5s, 10s
         console.warn(
-          `Gemini ${isRateLimited ? "429" : "timeout"}, կրկին փորձ ${attempt}/${maxAttempts} ${backoffMs}ms հետո...`
+          `Gemini ${isRetryable ? status : "timeout"}, կրկին փորձ ${attempt}/${maxAttempts} ${backoffMs}ms հետո...`
         );
         await sleep(backoffMs);
         continue;
